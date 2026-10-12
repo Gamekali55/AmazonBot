@@ -236,7 +236,7 @@ bot.action(/update_(\d+)/, async (ctx) => {
   }
 
   ctx.answerCbQuery('🔄 جاري تحديث السعر...');
-  const { price } = alt = await fetchAmazonData(product.url);
+  const { price } = await fetchAmazonData(product.url);
 
   if (price) {
     product.lastPrice = price;
