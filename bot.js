@@ -45,7 +45,7 @@ async function fetchAmazonData(url) {
     
     let priceText = $('.a-price .a-offscreen').first().text().trim();
     if (!priceText) {
-      priceText = $('#priceblock_ourprice').text().trim() \vert{}\vert{} $('#priceblock_dealprice').text().trim();
+      priceText = $('#priceblock_ourprice').text().trim() || $('#priceblock_dealprice').text().trim();
     }
     
     const priceMatch = priceText.replace(/,/g, '').match(/[\d.]+/);
