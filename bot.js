@@ -59,31 +59,40 @@ async function fetchAmazonData(url) {
 }
 
 async function checkAllProducts() {
-  console.log("🔄 جاري بدء الفحص التلقائي لجميع المنتجات في الخلفية كل دقيقة...");
+  console.log("🔄 جاري بدء الفحص الذكي لجميع المنتجات حسب شروط كل منتج...");
   let products = loadDatabase();
   
   for (let product of products) {
     const { price: currentPrice } = await fetchAmazonData(product.url);
     
     if (currentPrice) {
-      console.log(`🔍 تم فحص [${product.title.substring(0, 20)}...]: السعر الحالي ${currentPrice} ج.م | المستهدف ${product.targetPrice} ج.م`);
+      console.log(`🔍 فحص [${product.title.substring(0, 15)}...]: السعر الحالي ${currentPrice} | الأدنى ${product.targetPrice} | الأعلى ${product.maxPrice}`);
       
       let dropAlert = false;
+      let alertReason = "";
+
+      // فحص النطاق أو الحد الأدنى المخصص لهذا المنتج بالتحديد
       if (currentPrice <= product.targetPrice) {
         dropAlert = true;
+        alertReason = `🎯 السعر وصل للحد الأدنى المستهدف أو أقل!`;
+      } else if (product.maxPrice > 0 && currentPrice >= product.targetPrice && currentPrice <= product.maxPrice) {
+        dropAlert = true;
+        alertReason = `📊 السعر دخل جوه المدى المخصص للمنتج (بين ${product.targetPrice} و ${product.maxPrice})`;
       } else if (product.lastPrice && currentPrice <= product.lastPrice * 0.85) {
         dropAlert = true;
+        alertReason = `🔥 هبوط مفاجئ وكبير في السعر!`;
       }
 
       product.lastPrice = currentPrice;
       saveDatabase(products);
 
       if (dropAlert) {
-        const message = `🎉 **تنبيه انخفاض سعر مفاجئ!**\n\n` +
+        const message = `🎉 **تنبيه ذكي للمنتج!**\n\n` +
+                        `📢 **السبب:** ${alertReason}\n\n` +
                         `📦 **المنتج:** ${product.title}\n` +
                         `💰 **السعر الحالي:** ${currentPrice} ج.م\n` +
-                        `🎯 **السعر المستهدف:** ${product.targetPrice} ج.م\n\n` +
-                        `🔗 [اضغط هنا للشراء الآن قبل فوات الأوان](${product.url})`;
+                        `🎯 **الحد الأدنى:** ${product.targetPrice} ج.م | 📈 **الحد الأعلى:** ${product.maxPrice || 'غير محدد'} ج.م\n\n` +
+                        `🔗 [اضغط هنا للشراء الآن](${product.url})`;
 
         bot.telegram.sendMessage(product.chatId, message, { parse_mode: 'Markdown' })
           .catch(err => console.error("❌ فشل إرسال الإشعار:", err.message));
@@ -109,7 +118,7 @@ bot.start((ctx) => {
 bot.action('start_add', (ctx) => {
   ctx.answerCbQuery();
   userState[ctx.from.id] = { step: 'waiting_url' };
-  ctx.editMessageText('🔗 **الخطوة 1/3:** أرسل الآن **رابط منتج أمازون** الذي تريد تتبعه:', { parse_mode: 'Markdown' });
+  ctx.editMessageText('🔗 **الخطوة 1/3:** أرسل الآن **رابط منتج أمازون**:', { parse_mode: 'Markdown' });
 });
 
 bot.on('text', async (ctx) => {
@@ -126,24 +135,24 @@ bot.on('text', async (ctx) => {
     }
     state.url = text;
     state.step = 'waiting_target';
-    return ctx.reply('🎯 **الخطوة 2/3:** أرسل الآن **أقل سعر أو السعر المستهدف** (بالأرقام فقط، مثلاً: 150):', { parse_mode: 'Markdown' });
+    return ctx.reply('🎯 **الخطوة 2/3:** أرسل الآن **الحد الأدنى (أقل سعر)** لهذا المنتج:', { parse_mode: 'Markdown' });
   }
 
   if (state.step === 'waiting_target') {
     const targetPrice = parseFloat(text);
     if (isNaN(targetPrice)) {
-      return ctx.reply('❌ يرجى إدخال رقم صحيح للسعر المستهدف.');
+      return ctx.reply('❌ يرجى إدخال رقم صحيح.');
     }
     state.targetPrice = targetPrice;
     state.step = 'waiting_max';
-    return ctx.reply('📈 **الخطوة 3/3:** أرسل الآن **أعلى سعر** (أو اكتب `0` لو مش فارق معاك أعلى سعر):', { parse_mode: 'Markdown' });
+    return ctx.reply('📈 **الخطوة 3/3:** أرسل الآن **الحد الأعلى** لهذا المنتج (أو اكتب `0` لو مش فارق معاك):', { parse_mode: 'Markdown' });
   }
 
   if (state.step === 'waiting_max') {
     const maxPrice = parseFloat(text);
     state.maxPrice = isNaN(maxPrice) ? 0 : maxPrice;
 
-    const loadingMsg = await ctx.reply('⏳ جاري جلب بيانات المنتج من أمازون وحفظه...');
+    const loadingMsg = await ctx.reply('⏳ جاري جلب بيانات المنتج وحفظه...');
     const { title, price } = await fetchAmazonData(state.url);
 
     let products = loadDatabase();
@@ -161,11 +170,10 @@ bot.on('text', async (ctx) => {
     saveDatabase(products);
     delete userState[userId];
 
-    const successText = `✅ **تمت إضافة المنتج بنجاح للقوائم!**\n\n` +
+    const successText = `✅ **تمت إضافة المنتج بنجاح مع نطاقه المخصص!**\n\n` +
                         `📦 **المنتج:** ${title}\n` +
                         `💰 **السعر الحالي:** ${price || 'غير معروف'} ج.م\n` +
-                        `🎯 **السعر المستهدف:** ${state.targetPrice} ج.م\n` +
-                        `📈 **أعلى سعر:** ${state.maxPrice || 'غير محدد'}`;
+                        `🎯 **الأدنى:** ${state.targetPrice} ج.م | 📈 **الأعلى:** ${state.maxPrice || 'غير محدد'}`;
 
     await ctx.telegram.editMessageText(userId, loadingMsg.message_id, null, successText, {
       parse_mode: 'Markdown',
@@ -198,7 +206,7 @@ function sendProductList(ctx) {
 
   userProducts.forEach((p, index) => {
     message += `${index + 1}. **${p.title.substring(0, 25)}...**\n` +
-               `💰 السعر الحالي: ${p.lastPrice} ج.م | 🎯 المستهدف: ${p.targetPrice} ج.م\n\n`;
+               `💰 الحالي: ${p.lastPrice} | 🎯 الأدنى: ${p.targetPrice} | 📈 الأعلى: ${p.maxPrice || '∞'}\n\n`;
 
     buttons.push([
       Markup.button.callback(`🔄 تحديث #${index + 1}`, `update_${p.id}`),
@@ -209,15 +217,9 @@ function sendProductList(ctx) {
   buttons.push([Markup.button.callback('➕ إضافة منتج آخر', 'start_add')]);
 
   if (ctx.callbackQuery) {
-    return ctx.editMessageText(message, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard(buttons)
-    });
+    return ctx.editMessageText(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
   } else {
-    return ctx.reply(message, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard(buttons)
-    });
+    return ctx.reply(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
   }
 }
 
@@ -258,7 +260,7 @@ bot.action(/delete_(\d+)/, (ctx) => {
 });
 
 bot.launch().then(() => {
-  console.log('🤖 البوت يعمل بكامل القوائم التفاعلية وتنبيهات الأسعار!');
+  console.log('🤖 البوت يعمل بكامل خوارزميات النطاقات المخصصة للمنتجات!');
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
