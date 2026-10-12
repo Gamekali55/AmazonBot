@@ -1,5 +1,5 @@
 {
-  "name": "amazon-bot",
+  "name": "amazon-price-bot",
   "version": "1.0.0",
   "description": "Amazon Price Tracker Telegram Bot",
   "main": "bot.js",
@@ -7,8 +7,8 @@
     "start": "node bot.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.4.0",
     "cheerio": "^1.0.0-rc.12",
-    "telegraf": "^4.15.3"
+    "telegraf": "^4.12.0"
   }
 }
