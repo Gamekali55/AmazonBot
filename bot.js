@@ -4,6 +4,7 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 
 const DB_FILE = 'products.json';
+const userState = {}; // لتخزين خطوات المستخدم المؤقتة (رابط، أقل سعر، أعلى سعر)
 
 function loadDatabase() {
   if (!fs.existsSync(DB_FILE)) {
@@ -44,7 +45,7 @@ async function fetchAmazonData(url) {
     
     let priceText = $('.a-price .a-offscreen').first().text().trim();
     if (!priceText) {
-      priceText = $('#priceblock_ourprice').text().trim() || $('#priceblock_dealprice').text().trim();
+      priceText = $('#priceblock_ourprice').text().trim() \vert{}\vert{} $('#priceblock_dealprice').text().trim();
     }
     
     const priceMatch = priceText.replace(/,/g, '').match(/[\d.]+/);
@@ -57,6 +58,7 @@ async function fetchAmazonData(url) {
   }
 }
 
+// فحص أوتوماتيكي كل دقيقة مع تنبيه الانخفاض المفاجئ
 async function checkAllProducts() {
   console.log("🔄 جاري بدء الفحص التلقائي لجميع المنتجات في الخلفية كل دقيقة...");
   let products = loadDatabase();
@@ -65,17 +67,26 @@ async function checkAllProducts() {
     const { price: currentPrice } = await fetchAmazonData(product.url);
     
     if (currentPrice) {
-      console.log(`🔍 تم فحص [${product.title.substring(0, 20)}...]: السعر الحالي ${currentPrice} ج.م | السعر المستهدف ${product.targetPrice} ج.م`);
+      console.log(`🔍 تم فحص [${product.title.substring(0, 20)}...]: السعر الحالي ${currentPrice} ج.م | المستهدف ${product.targetPrice} ج.م`);
       
+      let dropAlert = false;
+      // لو السعر الحالي اقل من أو يساوي السعر المستهدف، أو حصل هبوط مفاجئ كبير بنسبة معينة مقارنة بآخر سعر مسجل
+      if (currentPrice <= product.targetPrice) {
+        dropAlert = true;
+      } else if (product.lastPrice && currentPrice <= product.lastPrice * 0.85) {
+        // تنبيه هبوط مفاجئ بأكثر من 15٪ فجأة
+        dropAlert = true;
+      }
+
       product.lastPrice = currentPrice;
       saveDatabase(products);
 
-      if (currentPrice <= product.targetPrice) {
-        const message = `🎉 **تنبيه انخفاض السعر!**\n\n` +
+      if (dropAlert) {
+        const message = `🎉 **تنبيه انخفاض سعر مفاجئ!**\n\n` +
                         `📦 **المنتج:** ${product.title}\n` +
                         `💰 **السعر الحالي:** ${currentPrice} ج.م\n` +
-                        `🎯 **السعر المطلوب:** ${product.targetPrice} ج.م\n\n` +
-                        `🔗 [اضغط هنا للشراء الآن](${product.url})`;
+                        `🎯 **السعر المستهدف:** ${product.targetPrice} ج.م\n\n` +
+                        `🔗 [اضغط هنا للشراء الآن قبل فوات الأوان](${product.url})`;
 
         bot.telegram.sendMessage(product.chatId, message, { parse_mode: 'Markdown' })
           .catch(err => console.error("❌ فشل إرسال الإشعار:", err.message));
@@ -87,59 +98,149 @@ async function checkAllProducts() {
 
 setInterval(checkAllProducts, 60 * 1000);
 
+// واجهة البدء (قوائم تفاعلية)
 bot.start((ctx) => {
-  ctx.reply('أهلاً بك! أرسل لي أمر التتبع بهذا الشكل:\n\n`/track <الرابط> <السعر_المستهدف>`\n\nمثال:\n`/track https://amzn.eu/d/xyz 150`', { parse_mode: 'Markdown' });
-});
-
-bot.command('track', async (ctx) => {
-  const args = ctx.message.text.split(' ');
-  const url = args[1];
-  const targetPrice = parseFloat(args[2]);
-
-  if (!url || isNaN(targetPrice)) {
-    return ctx.reply('❌ يرجى إدخال الأمر بشكل صحيح:\n`/track <الرابط> <السعر_المستهدف>`', { parse_mode: 'Markdown' });
-  }
-
-  const loadingMsg = await ctx.reply('⏳ جاري إحضار بيانات المنتج من أمازون...');
-  const { title, price } = await fetchAmazonData(url);
-
-  if (!price) {
-    return ctx.telegram.editMessageText(ctx.chat.id, loadingMsg.message_id, null, '❌ متعذر جلب سعر المنتج، تأكد من صحة الرابط.');
-  }
-
-  let products = loadDatabase();
-  const newProduct = {
-    id: Date.now(),
-    chatId: ctx.chat.id,
-    url,
-    title,
-    targetPrice,
-    lastPrice: price
-  };
-
-  products.push(newProduct);
-  saveDatabase(products);
-
-  const replyText = `✅ **تمت الإضافة بنجاح!**\n\n` +
-                    `📦 **المنتج:** ${title}\n` +
-                    `💰 **السعر الحالي:** ${price} ج.م\n` +
-                    `🎯 **السعر المستهدف:** ${targetPrice} ج.م`;
-
-  ctx.telegram.editMessageText(ctx.chat.id, loadingMsg.message_id, null, replyText, {
+  const welcomeMsg = `أهلاً بك في **بوت تتبع أسعار أمازون 🛒**\n\nاستخدم الأزرار أدناه للتحكم الكامل في منتجاتك بكل سهولة:`;
+  ctx.reply(welcomeMsg, {
     parse_mode: 'Markdown',
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 تحديث السعر الآن', `update_${newProduct.id}`)]
+      [Markup.button.callback('➕ إضافة منتج جديد للتتبع', 'start_add')],
+      [Markup.button.callback('📋 قائمة منتجاتي المتابعة', 'show_list')]
     ])
   });
 });
 
+// زر بدء الإضافة
+bot.action('start_add', (ctx) => {
+  ctx.answerCbQuery();
+  userState[ctx.from.id] = { step: 'waiting_url' };
+  ctx.editMessageText('🔗 **الخطوة 1/3:** أرسل الآن **رابط منتج أمازون** الذي تريد تتبعه:', { parse_mode: 'Markdown' });
+});
+
+// التعامل مع الرسائل النصية للخطوات التفاعلية
+bot.on('text', async (ctx) => {
+  const userId = ctx.from.id;
+  const text = ctx.message.text.trim();
+
+  if (!userState[userId]) return;
+
+  const state = userState[userId];
+
+  if (state.step === 'waiting_url') {
+    if (!text.includes('http')) {
+      return ctx.reply('❌ يرجى إرسال رابط صحيح يبدأ بـ http أو https');
+    }
+    state.url = text;
+    state.step = 'waiting_target';
+    return ctx.reply('🎯 **الخطوة 2/3:** أرسل الآن **أقل سعر أو السعر المستهدف** (بالأرقام فقط، مثلاً: 150):', { parse_mode: 'Markdown' });
+  }
+
+  if (state.step === 'waiting_target') {
+    const targetPrice = parseFloat(text);
+    if (isNaN(targetPrice)) {
+      return ctx.reply('❌ يرجى إدخال رقم صحيح للسعر المستهدف.');
+    }
+    state.targetPrice = targetPrice;
+    state.step = 'waiting_max';
+    return ctx.reply('📈 **الخطوة 3/3:** أرسل الآن **أعلى سعر** (أو اكتب `0` لو مش فارق معاك أعلى سعر):', { parse_mode: 'Markdown' });
+  }
+
+  if (state.step === 'waiting_max') {
+    const maxPrice = parseFloat(text);
+    state.maxPrice = isNaN(maxPrice) ? 0 : maxPrice;
+
+    const loadingMsg = await ctx.reply('⏳ جاري جلب بيانات المنتج من أمازون وحفظه...');
+    const { title, price } = await fetchAmazonData(state.url);
+
+    let products = loadDatabase();
+    const newProduct = {
+      id: Date.now(),
+      chatId: userId,
+      url: state.url,
+      title: title,
+      targetPrice: state.targetPrice,
+      maxPrice: state.maxPrice,
+      lastPrice: price || 0
+    };
+
+    products.push(newProduct);
+    saveDatabase(products);
+    delete userState[userId];
+
+    const successText = `✅ **تمت إضافة المنتج بنجاح للقوائم!**\n\n` +
+                        `📦 **المنتج:** ${title}\n` +
+                        `💰 **السعر الحالي:** ${price || 'غير معروف'} ج.م\n` +
+                        `🎯 **السعر المستهدف:** ${state.targetPrice} ج.م\n` +
+                        `📈 **أعلى سعر:** ${state.maxPrice || 'غير محدد'}`;
+
+    await ctx.telegram.editMessageText(userId, loadingMsg.message_id, null, successText, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('📋 عرض قائمة منتجاتي', 'show_list')],
+        [Markup.button.callback('➕ إضافة منتج آخر', 'start_add')]
+      ])
+    });
+  }
+});
+
+// عرض قائمة المنتجات المضافة
+function sendProductList(ctx) {
+  let products = loadDatabase();
+  const chatId = ctx.chat ? ctx.chat.id : ctx.from.id;
+  let userProducts = products.filter(p => p.chatId === chatId);
+
+  if (userProducts.length === 0) {
+    const emptyMsg = '📭 **قائمة منتجاتك فارغة حالياً!**';
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('➕ إضافة منتج جديد', 'start_add')]
+    ]);
+    if (ctx.callbackQuery) {
+      return ctx.editMessageText(emptyMsg, { parse_mode: 'Markdown', ...keyboard });
+    }
+    return ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...keyboard });
+  }
+
+  let message = `📋 **قائمة منتجاتك المتابعة (${userProducts.length}):**\n\n`;
+  const buttons = [];
+
+  userProducts.forEach((p, index) => {
+    message += `${index + 1}. **${p.title.substring(0, 25)}...**\n` +
+               `💰 السعر الحالي: ${p.lastPrice} ج.م | 🎯 المستهدف: ${p.targetPrice} ج.م\n\n`;
+
+    buttons.push([
+      Markup.button.callback(`🔄 تحديث #${index + 1}`, `update_${p.id}`),
+      Markup.button.callback(`🗑️ حذف #${index + 1}`, `delete_${p.id}`)
+    ]);
+  });
+
+  buttons.push([Markup.button.callback('➕ إضافة منتج آخر', 'start_add')]);
+
+  if (ctx.callbackQuery) {
+    return ctx.editMessageText(message, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard(buttons)
+    });
+  } else {
+    return ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard(buttons)
+    });
+  }
+}
+
+bot.action('show_list', (ctx) => {
+  ctx.answerCbQuery();
+  sendProductList(ctx);
+});
+
+// تحديث سعر منتج
 bot.action(/update_(\d+)/, async (ctx) => {
   const id = parseInt(ctx.match[1]);
   let products = loadDatabase();
   const product = products.find(p => p.id === id);
 
   if (!product) {
-    return ctx.answerCbQuery('❌ لم يتم العثور على المنتج!');
+    return ctx.answerCbQuery('❌ المنتج غير موجود!');
   }
 
   ctx.answerCbQuery('🔄 جاري تحديث السعر...');
@@ -148,14 +249,25 @@ bot.action(/update_(\d+)/, async (ctx) => {
   if (price) {
     product.lastPrice = price;
     saveDatabase(products);
-    ctx.reply(`📊 **السعر الحالي للمنتج (${product.title.substring(0, 15)}...):** ${price} ج.م`, { parse_mode: 'Markdown' });
+    ctx.reply(`📊 **السعر المحدث (${product.title.substring(0, 15)}...):** ${price} ج.م`, { parse_mode: 'Markdown' });
   } else {
-    ctx.reply('❌ تعذر تحديث السعر حالياً، حاول لاحقاً.');
+    ctx.reply('❌ تعذر جلب السعر حالياً.');
   }
 });
 
+// حذف منتج
+bot.action(/delete_(\d+)/, (ctx) => {
+  const id = parseInt(ctx.match[1]);
+  let products = loadDatabase();
+  const updated = products.filter(p => p.id !== id);
+  saveDatabase(updated);
+
+  ctx.answerCbQuery('🗑️ تم الحذف بنجاح');
+  sendProductList(ctx);
+});
+
 bot.launch().then(() => {
-  console.log('🤖 البوت يعمل بنجاح ومستعد لفحص الأسعار تلقائياً كل دقيقة!');
+  console.log('🤖 البوت يعمل بكامل القوائم التفاعلية وتنبيهات الأسعار!');
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
