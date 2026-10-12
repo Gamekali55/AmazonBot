@@ -19,7 +19,11 @@ function loadDatabase() {
 }
 
 function saveDatabase(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error("❌ خطأ أثناء حفظ قاعدة البيانات:", e.message);
+  }
 }
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -29,6 +33,11 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new Telegraf(BOT_TOKEN);
+
+// معالج الأخطاء العام لمنع انهيار البوت عند انقطاع الاتصال
+bot.catch((err, ctx) => {
+  console.error(`❌ حدث خطأ غير متوقع في البوت أثناء التعامل مع التحديث ${ctx.updateType}:`, err.message);
+});
 
 async function fetchAmazonData(url) {
   try {
@@ -45,7 +54,7 @@ async function fetchAmazonData(url) {
     
     let priceText = $('.a-price .a-offscreen').first().text().trim();
     if (!priceText) {
-      priceText = $('#priceblock_ourprice').text().trim() || $('#priceblock_dealprice').text().trim();
+      priceText = $('#priceblock_ourprice').text().trim() \vert{}\vert{} $('#priceblock_dealprice').text().trim();
     }
     
     const priceMatch = priceText.replace(/,/g, '').match(/[\d.]+/);
@@ -71,7 +80,6 @@ async function checkAllProducts() {
       let dropAlert = false;
       let alertReason = "";
 
-      // فحص النطاق أو الحد الأدنى المخصص لهذا المنتج بالتحديد
       if (currentPrice <= product.targetPrice) {
         dropAlert = true;
         alertReason = `🎯 السعر وصل للحد الأدنى المستهدف أو أقل!`;
@@ -94,8 +102,11 @@ async function checkAllProducts() {
                         `🎯 **الحد الأدنى:** ${product.targetPrice} ج.م | 📈 **الحد الأعلى:** ${product.maxPrice || 'غير محدد'} ج.م\n\n` +
                         `🔗 [اضغط هنا للشراء الآن](${product.url})`;
 
-        bot.telegram.sendMessage(product.chatId, message, { parse_mode: 'Markdown' })
-          .catch(err => console.error("❌ فشل إرسال الإشعار:", err.message));
+        try {
+          await bot.telegram.sendMessage(product.chatId, message, { parse_mode: 'Markdown' });
+        } catch (err) {
+          console.error("❌ فشل إرسال الإشعار بسبب مشكلة شبكة:", err.message);
+        }
       }
     }
     await new Promise(res => setTimeout(res, 2000));
@@ -104,163 +115,191 @@ async function checkAllProducts() {
 
 setInterval(checkAllProducts, 60 * 1000);
 
-bot.start((ctx) => {
-  const welcomeMsg = `أهلاً بك في **بوت تتبع أسعار أمازون 🛒**\n\nاستخدم الأزرار أدناه للتحكم الكامل في منتجاتك بكل سهولة:`;
-  ctx.reply(welcomeMsg, {
-    parse_mode: 'Markdown',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('➕ إضافة منتج جديد للتتبع', 'start_add')],
-      [Markup.button.callback('📋 قائمة منتجاتي المتابعة', 'show_list')]
-    ])
-  });
+bot.start(async (ctx) => {
+  try {
+    const welcomeMsg = `أهلاً بك في **بوت تتبع أسعار أمازون 🛒**\n\nاستخدم الأزرار أدناه للتحكم الكامل في منتجاتك بكل سهولة:`;
+    await ctx.reply(welcomeMsg, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('➕ إضافة منتج جديد للتتبع', 'start_add')],
+        [Markup.button.callback('📋 قائمة منتجاتي المتابعة', 'show_list')]
+      ])
+    });
+  } catch (err) {
+    console.error("❌ خطأ في أمر /start:", err.message);
+  }
 });
 
-bot.action('start_add', (ctx) => {
-  ctx.answerCbQuery();
-  userState[ctx.from.id] = { step: 'waiting_url' };
-  ctx.editMessageText('🔗 **الخطوة 1/3:** أرسل الآن **رابط منتج أمازون**:', { parse_mode: 'Markdown' });
+bot.action('start_add', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    userState[ctx.from.id] = { step: 'waiting_url' };
+    await ctx.editMessageText('🔗 **الخطوة 1/3:** أرسل الآن **رابط منتج أمازون**:', { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error("❌ خطأ في إجراء start_add:", err.message);
+  }
 });
 
 bot.on('text', async (ctx) => {
-  const userId = ctx.from.id;
-  const text = ctx.message.text.trim();
+  try {
+    const userId = ctx.from.id;
+    const text = ctx.message.text.trim();
 
-  if (!userState[userId]) return;
+    if (!userState[userId]) return;
 
-  const state = userState[userId];
+    const state = userState[userId];
 
-  if (state.step === 'waiting_url') {
-    if (!text.includes('http')) {
-      return ctx.reply('❌ يرجى إرسال رابط صحيح يبدأ بـ http أو https');
+    if (state.step === 'waiting_url') {
+      if (!text.includes('http')) {
+        return ctx.reply('❌ يرجى إرسال رابط صحيح يبدأ بـ http أو https');
+      }
+      state.url = text;
+      state.step = 'waiting_target';
+      return ctx.reply('🎯 **الخطوة 2/3:** أرسل الآن **الحد الأدنى (أقل سعر)** لهذا المنتج:', { parse_mode: 'Markdown' });
     }
-    state.url = text;
-    state.step = 'waiting_target';
-    return ctx.reply('🎯 **الخطوة 2/3:** أرسل الآن **الحد الأدنى (أقل سعر)** لهذا المنتج:', { parse_mode: 'Markdown' });
-  }
 
-  if (state.step === 'waiting_target') {
-    const targetPrice = parseFloat(text);
-    if (isNaN(targetPrice)) {
-      return ctx.reply('❌ يرجى إدخال رقم صحيح.');
+    if (state.step === 'waiting_target') {
+      const targetPrice = parseFloat(text);
+      if (isNaN(targetPrice)) {
+        return ctx.reply('❌ يرجى إدخال رقم صحيح.');
+      }
+      state.targetPrice = targetPrice;
+      state.step = 'waiting_max';
+      return ctx.reply('📈 **الخطوة 3/3:** أرسل الآن **الحد الأعلى** لهذا المنتج (أو اكتب `0` لو مش فارق معاك):', { parse_mode: 'Markdown' });
     }
-    state.targetPrice = targetPrice;
-    state.step = 'waiting_max';
-    return ctx.reply('📈 **الخطوة 3/3:** أرسل الآن **الحد الأعلى** لهذا المنتج (أو اكتب `0` لو مش فارق معاك):', { parse_mode: 'Markdown' });
-  }
 
-  if (state.step === 'waiting_max') {
-    const maxPrice = parseFloat(text);
-    state.maxPrice = isNaN(maxPrice) ? 0 : maxPrice;
+    if (state.step === 'waiting_max') {
+      const maxPrice = parseFloat(text);
+      state.maxPrice = isNaN(maxPrice) ? 0 : maxPrice;
 
-    const loadingMsg = await ctx.reply('⏳ جاري جلب بيانات المنتج وحفظه...');
-    const { title, price } = await fetchAmazonData(state.url);
+      const loadingMsg = await ctx.reply('⏳ جاري جلب بيانات المنتج وحفظه...');
+      const { title, price } = await fetchAmazonData(state.url);
 
-    let products = loadDatabase();
-    const newProduct = {
-      id: Date.now(),
-      chatId: userId,
-      url: state.url,
-      title: title,
-      targetPrice: state.targetPrice,
-      maxPrice: state.maxPrice,
-      lastPrice: price || 0
-    };
+      let products = loadDatabase();
+      const newProduct = {
+        id: Date.now(),
+        chatId: userId,
+        url: state.url,
+        title: title,
+        targetPrice: state.targetPrice,
+        maxPrice: state.maxPrice,
+        lastPrice: price || 0
+      };
 
-    products.push(newProduct);
-    saveDatabase(products);
-    delete userState[userId];
+      products.push(newProduct);
+      saveDatabase(products);
+      delete userState[userId];
 
-    const successText = `✅ **تمت إضافة المنتج بنجاح مع نطاقه المخصص!**\n\n` +
-                        `📦 **المنتج:** ${title}\n` +
-                        `💰 **السعر الحالي:** ${price || 'غير معروف'} ج.م\n` +
-                        `🎯 **الأدنى:** ${state.targetPrice} ج.م | 📈 **الأعلى:** ${state.maxPrice || 'غير محدد'}`;
+      const successText = `✅ **تمت إضافة المنتج بنجاح مع نطاقه المخصص!**\n\n` +
+                          `📦 **المنتج:** ${title}\n` +
+                          `💰 **السعر الحالي:** ${price || 'غير معروف'} ج.م\n` +
+                          `🎯 **الأدنى:** ${state.targetPrice} ج.م | 📈 **الأعلى:** ${state.maxPrice || 'غير محدد'}`;
 
-    await ctx.telegram.editMessageText(userId, loadingMsg.message_id, null, successText, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('📋 عرض قائمة منتجاتي', 'show_list')],
-        [Markup.button.callback('➕ إضافة منتج آخر', 'start_add')]
-      ])
-    });
+      await ctx.telegram.editMessageText(userId, loadingMsg.message_id, null, successText, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('📋 عرض قائمة منتجاتي', 'show_list')],
+          [Markup.button.callback('➕ إضافة منتج آخر', 'start_add')]
+        ])
+      });
+    }
+  } catch (err) {
+    console.error("❌ خطأ أثناء معالجة النص:", err.message);
   }
 });
 
-function sendProductList(ctx) {
-  let products = loadDatabase();
-  const chatId = ctx.chat ? ctx.chat.id : ctx.from.id;
-  let userProducts = products.filter(p => p.chatId === chatId);
+async function sendProductList(ctx) {
+  try {
+    let products = loadDatabase();
+    const chatId = ctx.chat ? ctx.chat.id : ctx.from.id;
+    let userProducts = products.filter(p => p.chatId === chatId);
 
-  if (userProducts.length === 0) {
-    const emptyMsg = '📭 **قائمة منتجاتك فارغة حالياً!**';
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('➕ إضافة منتج جديد', 'start_add')]
-    ]);
-    if (ctx.callbackQuery) {
-      return ctx.editMessageText(emptyMsg, { parse_mode: 'Markdown', ...keyboard });
+    if (userProducts.length === 0) {
+      const emptyMsg = '📭 **قائمة منتجاتك فارغة حالياً!**';
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('➕ إضافة منتج جديد', 'start_add')]
+      ]);
+      if (ctx.callbackQuery) {
+        return ctx.editMessageText(emptyMsg, { parse_mode: 'Markdown', ...keyboard });
+      }
+      return ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...keyboard });
     }
-    return ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...keyboard });
-  }
 
-  let message = `📋 **قائمة منتجاتك المتابعة (${userProducts.length}):**\n\n`;
-  const buttons = [];
+    let message = `📋 **قائمة منتجاتك المتابعة (${userProducts.length}):**\n\n`;
+    const buttons = [];
 
-  userProducts.forEach((p, index) => {
-    message += `${index + 1}. **${p.title.substring(0, 25)}...**\n` +
-               `💰 الحالي: ${p.lastPrice} | 🎯 الأدنى: ${p.targetPrice} | 📈 الأعلى: ${p.maxPrice || '∞'}\n\n`;
+    userProducts.forEach((p, index) => {
+      message += `${index + 1}. **${p.title.substring(0, 25)}...**\n` +
+                 `💰 الحالي: ${p.lastPrice} | 🎯 الأدنى: ${p.targetPrice} | 📈 الأعلى: ${p.maxPrice || '∞'}\n\n`;
 
-    buttons.push([
-      Markup.button.callback(`🔄 تحديث #${index + 1}`, `update_${p.id}`),
-      Markup.button.callback(`🗑️ حذف #${index + 1}`, `delete_${p.id}`)
-    ]);
-  });
+      buttons.push([
+        Markup.button.callback(`🔄 تحديث #${index + 1}`, `update_${p.id}`),
+        Markup.button.callback(`🗑️ حذف #${index + 1}`, `delete_${p.id}`)
+      ]);
+    });
 
-  buttons.push([Markup.button.callback('➕ إضافة منتج آخر', 'start_add')]);
+    buttons.push([Markup.button.callback('➕ إضافة منتج آخر', 'start_add')]);
 
-  if (ctx.callbackQuery) {
-    return ctx.editMessageText(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
-  } else {
-    return ctx.reply(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+    if (ctx.callbackQuery) {
+      return ctx.editMessageText(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+    } else {
+      return ctx.reply(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+    }
+  } catch (err) {
+    console.error("❌ خطأ في عرض قائمة المنتجات:", err.message);
   }
 }
 
-bot.action('show_list', (ctx) => {
-  ctx.answerCbQuery();
-  sendProductList(ctx);
+bot.action('show_list', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    await sendProductList(ctx);
+  } catch (err) {
+    console.error("❌ خطأ في show_list:", err.message);
+  }
 });
 
 bot.action(/update_(\d+)/, async (ctx) => {
-  const id = parseInt(ctx.match[1]);
-  let products = loadDatabase();
-  const product = products.find(p => p.id === id);
+  try {
+    const id = parseInt(ctx.match[1]);
+    let products = loadDatabase();
+    const product = products.find(p => p.id === id);
 
-  if (!product) {
-    return ctx.answerCbQuery('❌ المنتج غير موجود!');
-  }
+    if (!product) {
+      return ctx.answerCbQuery('❌ المنتج غير موجود!');
+    }
 
-  ctx.answerCbQuery('🔄 جاري تحديث السعر...');
-  const { price } = await fetchAmazonData(product.url);
+    await ctx.answerCbQuery('🔄 جاري تحديث السعر...');
+    const { price } = await fetchAmazonData(product.url);
 
-  if (price) {
-    product.lastPrice = price;
-    saveDatabase(products);
-    ctx.reply(`📊 **السعر المحدث (${product.title.substring(0, 15)}...):** ${price} ج.م`, { parse_mode: 'Markdown' });
-  } else {
-    ctx.reply('❌ تعذر جلب السعر حالياً.');
+    if (price) {
+      product.lastPrice = price;
+      saveDatabase(products);
+      await ctx.reply(`📊 **السعر المحدث (${product.title.substring(0, 15)}...):** ${price} ج.م`, { parse_mode: 'Markdown' });
+    } else {
+      await ctx.reply('❌ تعذر جلب السعر حالياً.');
+    }
+  } catch (err) {
+    console.error("❌ خطأ في تحديث المنتج:", err.message);
   }
 });
 
-bot.action(/delete_(\d+)/, (ctx) => {
-  const id = parseInt(ctx.match[1]);
-  let products = loadDatabase();
-  const updated = products.filter(p => p.id !== id);
-  saveDatabase(updated);
+bot.action(/delete_(\d+)/, async (ctx) => {
+  try {
+    const id = parseInt(ctx.match[1]);
+    let products = loadDatabase();
+    const updated = products.filter(p => p.id !== id);
+    saveDatabase(updated);
 
-  ctx.answerCbQuery('🗑️ تم الحذف بنجاح');
-  sendProductList(ctx);
+    await ctx.answerCbQuery('🗑️ تم الحذف بنجاح');
+    await sendProductList(ctx);
+  } catch (err) {
+    console.error("❌ خطأ في حذف المنتج:", err.message);
+  }
 });
 
 bot.launch().then(() => {
-  console.log('🤖 البوت يعمل بكامل خوارزميات النطاقات المخصصة للمنتجات!');
+  console.log('🤖 البوت يعمل بكفاءة مع نظام حماية الاتصال المتقدم!');
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
