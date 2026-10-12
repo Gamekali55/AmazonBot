@@ -4,7 +4,7 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 
 const DB_FILE = 'products.json';
-const userState = {}; // لتخزين خطوات المستخدم المؤقتة (رابط، أقل سعر، أعلى سعر)
+const userState = {};
 
 function loadDatabase() {
   if (!fs.existsSync(DB_FILE)) {
@@ -58,7 +58,6 @@ async function fetchAmazonData(url) {
   }
 }
 
-// فحص أوتوماتيكي كل دقيقة مع تنبيه الانخفاض المفاجئ
 async function checkAllProducts() {
   console.log("🔄 جاري بدء الفحص التلقائي لجميع المنتجات في الخلفية كل دقيقة...");
   let products = loadDatabase();
@@ -70,11 +69,9 @@ async function checkAllProducts() {
       console.log(`🔍 تم فحص [${product.title.substring(0, 20)}...]: السعر الحالي ${currentPrice} ج.م | المستهدف ${product.targetPrice} ج.م`);
       
       let dropAlert = false;
-      // لو السعر الحالي اقل من أو يساوي السعر المستهدف، أو حصل هبوط مفاجئ كبير بنسبة معينة مقارنة بآخر سعر مسجل
       if (currentPrice <= product.targetPrice) {
         dropAlert = true;
       } else if (product.lastPrice && currentPrice <= product.lastPrice * 0.85) {
-        // تنبيه هبوط مفاجئ بأكثر من 15٪ فجأة
         dropAlert = true;
       }
 
@@ -98,7 +95,6 @@ async function checkAllProducts() {
 
 setInterval(checkAllProducts, 60 * 1000);
 
-// واجهة البدء (قوائم تفاعلية)
 bot.start((ctx) => {
   const welcomeMsg = `أهلاً بك في **بوت تتبع أسعار أمازون 🛒**\n\nاستخدم الأزرار أدناه للتحكم الكامل في منتجاتك بكل سهولة:`;
   ctx.reply(welcomeMsg, {
@@ -110,14 +106,12 @@ bot.start((ctx) => {
   });
 });
 
-// زر بدء الإضافة
 bot.action('start_add', (ctx) => {
   ctx.answerCbQuery();
   userState[ctx.from.id] = { step: 'waiting_url' };
   ctx.editMessageText('🔗 **الخطوة 1/3:** أرسل الآن **رابط منتج أمازون** الذي تريد تتبعه:', { parse_mode: 'Markdown' });
 });
 
-// التعامل مع الرسائل النصية للخطوات التفاعلية
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const text = ctx.message.text.trim();
@@ -183,7 +177,6 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// عرض قائمة المنتجات المضافة
 function sendProductList(ctx) {
   let products = loadDatabase();
   const chatId = ctx.chat ? ctx.chat.id : ctx.from.id;
@@ -233,7 +226,6 @@ bot.action('show_list', (ctx) => {
   sendProductList(ctx);
 });
 
-// تحديث سعر منتج
 bot.action(/update_(\d+)/, async (ctx) => {
   const id = parseInt(ctx.match[1]);
   let products = loadDatabase();
@@ -244,7 +236,7 @@ bot.action(/update_(\d+)/, async (ctx) => {
   }
 
   ctx.answerCbQuery('🔄 جاري تحديث السعر...');
-  const { price } = await fetchAmazonData(product.url);
+  const { price } = alt = await fetchAmazonData(product.url);
 
   if (price) {
     product.lastPrice = price;
@@ -255,7 +247,6 @@ bot.action(/update_(\d+)/, async (ctx) => {
   }
 });
 
-// حذف منتج
 bot.action(/delete_(\d+)/, (ctx) => {
   const id = parseInt(ctx.match[1]);
   let products = loadDatabase();
