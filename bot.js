@@ -34,9 +34,9 @@ if (!BOT_TOKEN) {
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// معالج الأخطاء العام لمنع انهيار البوت عند انقطاع الاتصال
+// معالج أخطاء لمنع انهيار البوت عند انقطاع الشبكة
 bot.catch((err, ctx) => {
-  console.error(`❌ حدث خطأ غير متوقع في البوت أثناء التعامل مع التحديث ${ctx.updateType}:`, err.message);
+  console.error(`❌ خطأ غير متوقع في البوت:`, err.message);
 });
 
 async function fetchAmazonData(url) {
@@ -54,7 +54,7 @@ async function fetchAmazonData(url) {
     
     let priceText = $('.a-price .a-offscreen').first().text().trim();
     if (!priceText) {
-      priceText = $('#priceblock_ourprice').text().trim() || $('#priceblock_dealprice').text().trim();
+      priceText = $('#priceblock_ourprice').text().trim() \vert{}\vert{} $('#priceblock_dealprice').text().trim();
     }
     
     const priceMatch = priceText.replace(/,/g, '').match(/[\d.]+/);
@@ -68,7 +68,7 @@ async function fetchAmazonData(url) {
 }
 
 async function checkAllProducts() {
-  console.log("🔄 جاري بدء الفحص الذكي لجميع المنتجات حسب شروط كل منتج...");
+  console.log("🔄 جاري فحص جميع المنتجات في الخلفية...");
   let products = loadDatabase();
   
   for (let product of products) {
@@ -80,6 +80,7 @@ async function checkAllProducts() {
       let dropAlert = false;
       let alertReason = "";
 
+      // شروط التنبيه للمنتج المخصص
       if (currentPrice <= product.targetPrice) {
         dropAlert = true;
         alertReason = `🎯 السعر وصل للحد الأدنى المستهدف أو أقل!`;
@@ -105,7 +106,7 @@ async function checkAllProducts() {
         try {
           await bot.telegram.sendMessage(product.chatId, message, { parse_mode: 'Markdown' });
         } catch (err) {
-          console.error("❌ فشل إرسال الإشعار بسبب مشكلة شبكة:", err.message);
+          console.error("❌ فشل إرسال الإشعار:", err.message);
         }
       }
     }
@@ -113,6 +114,7 @@ async function checkAllProducts() {
   }
 }
 
+// فحص الأسعار كل دقيقة
 setInterval(checkAllProducts, 60 * 1000);
 
 bot.start(async (ctx) => {
@@ -126,7 +128,7 @@ bot.start(async (ctx) => {
       ])
     });
   } catch (err) {
-    console.error("❌ خطأ في أمر /start:", err.message);
+    console.error("❌ خطأ في /start:", err.message);
   }
 });
 
@@ -136,7 +138,7 @@ bot.action('start_add', async (ctx) => {
     userState[ctx.from.id] = { step: 'waiting_url' };
     await ctx.editMessageText('🔗 **الخطوة 1/3:** أرسل الآن **رابط منتج أمازون**:', { parse_mode: 'Markdown' });
   } catch (err) {
-    console.error("❌ خطأ في إجراء start_add:", err.message);
+    console.error("❌ خطأ في start_add:", err.message);
   }
 });
 
@@ -204,11 +206,11 @@ bot.on('text', async (ctx) => {
       });
     }
   } catch (err) {
-    console.error("❌ خطأ أثناء معالجة النص:", err.message);
+    console.error("❌ خطأ في معالجة النص:", err.message);
   }
 });
 
-async function sendProductList(ctx) {
+function sendProductList(ctx) {
   try {
     let products = loadDatabase();
     const chatId = ctx.chat ? ctx.chat.id : ctx.from.id;
@@ -246,14 +248,14 @@ async function sendProductList(ctx) {
       return ctx.reply(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
     }
   } catch (err) {
-    console.error("❌ خطأ في عرض قائمة المنتجات:", err.message);
+    console.error("❌ خطأ في sendProductList:", err.message);
   }
 }
 
 bot.action('show_list', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    await sendProductList(ctx);
+    sendProductList(ctx);
   } catch (err) {
     console.error("❌ خطأ في show_list:", err.message);
   }
@@ -292,14 +294,14 @@ bot.action(/delete_(\d+)/, async (ctx) => {
     saveDatabase(updated);
 
     await ctx.answerCbQuery('🗑️ تم الحذف بنجاح');
-    await sendProductList(ctx);
+    sendProductList(ctx);
   } catch (err) {
     console.error("❌ خطأ في حذف المنتج:", err.message);
   }
 });
 
 bot.launch().then(() => {
-  console.log('🤖 البوت يعمل بكفاءة مع نظام حماية الاتصال المتقدم!');
+  console.log('🤖 البوت يعمل الآن بشكل مستقر مع السيرفر السحابي!');
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
